@@ -4,11 +4,13 @@ import dotenv from "dotenv";
 import { connectDb } from "./config/db.js";
 import router from "./routes/user.route.js";
 import authRoute from "./routes/auth.route.js";
+import productRoutes from "./routes/product.route.js";
 import authCheck from "./middleware/AuthMiddleware.js";
 
 dotenv.config();
 
 const app = express();
+
 const HOST = process.env.HOST || "localhost";
 const PORT = process.env.PORT || 3000;
 
@@ -25,9 +27,22 @@ const logger = (req, res, next) => {
 // Global middleware
 app.use(express.json());
 app.use(cors());
-app.use("/api/users", authCheck, router);
-app.use("/api/auth", authRoute);
+
+// auth route
+app.use("/auth", authRoute);
+
+const apiRoutes = express.Router();
+// prefix /api url
+apiRoutes.use(authCheck);
+
+// users routes
+apiRoutes.use("/users", router);
+// products routes
+apiRoutes.use("/products", productRoutes);
+
 app.use(logger);
+
+app.use("/api", apiRoutes);
 
 app.get("/health", (req, res) => {
   res.status(200).json({ message: "Application is health!" });
