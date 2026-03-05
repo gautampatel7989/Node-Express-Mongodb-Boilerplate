@@ -1,12 +1,14 @@
 import { User } from "../../models/user.model.js";
-import { hasPassword } from "../../helpers/helper.js";
+import messages from "../../resources/responseMessages.js";
+import userService from "../../services/user.service.js";
 
 /**
  * UserController class to handle user related operations
  */
 class UserController {
-  constructor(User) {
+  constructor(User, userService) {
     this.User = User;
+    this.userService = userService;
   }
 
   /**
@@ -16,10 +18,10 @@ class UserController {
    * @returns
    */
   getAllUsers = async (req, res) => {
-    const response = await this.User.find().select("-password -__v");
+    const response = await this.userService.fetchAllUsers();
 
     return res.status(200).json({
-      message: "All Users",
+      message: messages.ALL_USERS,
       data: response,
     });
   };
@@ -30,16 +32,10 @@ class UserController {
    * @param {*} res
    */
   createUser = async (req, res) => {
-    const { name, email, password } = req.body;
-    const hashPassword = await hasPassword(password);
-    const response = await this.User.create({
-      name,
-      email,
-      password: hashPassword,
-    });
+    const response = await this.userService.create(req.body);
 
     res.status(201).json({
-      message: "User created successfully",
+      message: messages.USER_CREATED,
       data: response,
     });
   };
@@ -52,9 +48,9 @@ class UserController {
    */
   getUserById = async (req, res) => {
     const { id } = req.params;
-    const response = await this.User.findById(id).select("-password -__v");
+    const response = await this.userService.fetchUserById(id);
     return res.status(200).json({
-      message: "User Details",
+      message: messages.USER_DETAILS,
       data: response,
     });
   };
@@ -67,22 +63,9 @@ class UserController {
    */
   updateUser = async (req, res) => {
     const { id } = req.params;
-    const { name, email, password } = req.body;
-    const hashPassword = await hasPassword(password);
-
-    const response = await this.User.findByIdAndUpdate(
-      id,
-      {
-        name,
-        email,
-        password: hashPassword,
-      },
-      {
-        new: true,
-      },
-    ).select("-password -__v");
+    const response = await this.userService.update(id, req.body);
     return res.status(200).json({
-      message: "User updated successfully",
+      message: messages.USER_UPDATED,
       data: response,
     });
   };
@@ -95,12 +78,12 @@ class UserController {
    */
   deleteUser = async (req, res) => {
     const { id } = req.params;
-    const response = await this.User.findByIdAndDelete(id);
+    const response = await this.userService.delete(id);
     return res.status(200).json({
-      message: "User deleted successfully",
+      message: messages.USER_DELETED,
       data: response,
     });
   };
 }
 
-export default new UserController(User);
+export default new UserController(User, userService);
