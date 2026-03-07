@@ -5,6 +5,7 @@
   "main": "./src/server.js",
   "scripts": {
     "start": "nodemon  --env-file=.env ./src/server.js",
+    "seed": "node src/database/seeders/index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

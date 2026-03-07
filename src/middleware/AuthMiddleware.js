@@ -11,7 +11,7 @@ const authCheck = async (req, res, next) => {
     try {
       token = req.headers.authorization.split(" ")[1];
       const decode = jwt.verify(token, process.env.JWT_SECRET);
-      req.user = await User.findById(decode.id).select("-password");
+      req.user = await User.findById(decode.id).select("-password").populate('role');
       next();
     } catch (err) {
       res.status(401).json({

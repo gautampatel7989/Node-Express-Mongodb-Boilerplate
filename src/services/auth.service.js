@@ -5,6 +5,8 @@ import {
   comparePassword,
 } from "../helpers/helper.js";
 import messages from "../resources/responseMessages.js";
+import Role from "../models/Role.model.js";
+import RolePermissionModel from "../models/RolePermission.model.js";
 
 class AuthService {
   /**
@@ -29,11 +31,42 @@ class AuthService {
 
     const token = generateToken(user);
 
+    // Populate role and permissions
+    let populatedUser = await user.populate("role");
+    if (!populatedUser.role) {
+      // Assign default user role if none
+      const userRole = await Role.findOne({ name: "user" });
+
+      if (userRole) {
+        populatedUser.role = userRole;
+        // Update the user in DB
+        await AuthRepository.update(populatedUser._id, { role: userRole._id });
+      }
+    }
+    let permissions = [];
+    if (populatedUser.role) {
+      if (populatedUser.role.all) {
+        // If role has all permissions, get all permissions
+        const allPermissions = await RolePermissionModel.find({
+          role_id: populatedUser.role._id,
+        }).populate("permission_id");
+        permissions = allPermissions.map((rp) => rp.permission_id.name);
+      } else {
+        const rolePermissions = await RolePermissionModel.find({
+          role_id: populatedUser.role._id,
+        }).populate("permission_id");
+        permissions = rolePermissions.map((rp) => rp.permission_id.name);
+      }
+    }
+    console.log("role::", populatedUser.role);
     // return both token and user details (without password)
     const safeUser = {
-      _id: user._id,
-      name: user.name,
-      email: user.email,
+      _id: populatedUser._id,
+      name: populatedUser.name,
+      email: populatedUser.email,
+      role: populatedUser.role,
+      permissions: permissions,
+      isAdmin: populatedUser.role && populatedUser.role.name === 'admin',
     };
 
     return { token, user: safeUser };
@@ -52,11 +85,19 @@ class AuthService {
       throw err;
     }
 
+    const userRole = await Role.findOne({ name: "user" });
+    if (!userRole) {
+      const err = new Error("Default user role not found");
+      err.status = 500;
+      throw err;
+    }
+
     const hashed = await hasPassword(data.password);
     const created = await AuthRepository.create({
       name: data.name,
       email: data.email,
       password: hashed,
+      role: userRole._id,
     });
 
     // strip password before returning

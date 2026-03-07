@@ -4,6 +4,8 @@ import dotenv from "dotenv";
 import { connectDb } from "./config/db.js";
 import router from "./routes/user.route.js";
 import authRoute from "./routes/auth.route.js";
+import roleRoute from "./routes/role.route.js";
+import permissionRoute from "./routes/permission.route.js";
 import productRoutes from "./routes/product.route.js";
 import authCheck from "./middleware/AuthMiddleware.js";
 
@@ -37,6 +39,13 @@ apiRoutes.use(authCheck);
 
 // users routes
 apiRoutes.use("/users", router);
+
+// Role route
+apiRoutes.use("/roles", roleRoute);
+
+// Permission route
+apiRoutes.use("/permissions", permissionRoute);
+
 // products routes
 apiRoutes.use("/products", productRoutes);
 
