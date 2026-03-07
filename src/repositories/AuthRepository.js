@@ -18,6 +18,16 @@ class AuthRepository {
   async create(userData) {
     return User.create(userData);
   }
+
+  /**
+   * Update a user document
+   * @param {String} id
+   * @param {Object} data
+   * @returns {Promise<Object>}
+   */
+  async update(id, data) {
+    return User.findByIdAndUpdate(id, data, { new: true });
+  }
 }
 
 export default new AuthRepository();
