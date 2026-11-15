@@ -1,0 +1,272 @@
+name: Dependabot Direct Merge
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      pull_request_number:
+        description: Dependabot pull request number to validate and merge
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: none
+  pull-requests: write
+
+concurrency:
+  group: dependabot-direct-merge-${{ github.event.workflow_run.pull_requests[0].number || inputs.pull_request_number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  validate-and-merge:
+    name: Validate and directly merge Dependabot PR
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate checks and merge pull request
+        id: merge
+        uses: actions/github-script@v7
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER_INPUT: ${{ inputs.pull_request_number }}
+          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+        with:
+          script: |
+            const fs = require("fs");
+            const { owner, repo } = context.repo;
+            const report = {
+              repository: `${owner}/${repo}`,
+              trigger: process.env.EVENT_NAME,
+              scope: "All Dependabot update types",
+              startedAt: new Date().toISOString(),
+              result: "blocked",
+              mergeAttempted: false,
+              validations: [],
+            };
+            let failure;
+
+            const workflowFile = ".github/workflows/ci.yml";
+            const requiredJob = "Tests, lint, and dependency audit";
+
+            const validateCiRun = async (run) => {
+              if ((run.path || "").split("@")[0] !== workflowFile) {
+                throw new Error("The validation run did not come from the expected CI workflow.");
+              }
+              if (run.event !== "pull_request") {
+                throw new Error("Only CI runs triggered by pull_request can authorize a merge.");
+              }
+              if (run.status !== "completed" || run.conclusion !== "success") {
+                throw new Error(`The CI workflow did not succeed (status: ${run.status}, conclusion: ${run.conclusion}).`);
+              }
+
+              const jobs = await github.paginate(
+                github.rest.actions.listJobsForWorkflowRun,
+                { owner, repo, run_id: run.id, per_page: 100 },
+              );
+              const jobNames = new Set(jobs.map((job) => job.name));
+              if (!jobNames.has(requiredJob)) {
+                throw new Error(`Required CI job "${requiredJob}" was not found.`);
+              }
+              const unsuccessfulJobs = jobs.filter(
+                (job) => job.status !== "completed" || job.conclusion !== "success",
+              );
+              if (unsuccessfulJobs.length > 0) {
+                throw new Error(
+                  `CI contains unsuccessful or skipped jobs: ${unsuccessfulJobs.map((job) => `${job.name} (${job.conclusion || job.status})`).join(", ")}`,
+                );
+              }
+
+              report.ciRun = {
+                id: run.id,
+                url: run.html_url,
+                conclusion: run.conclusion,
+                jobs: jobs.map((job) => ({
+                  name: job.name,
+                  conclusion: job.conclusion,
+                })),
+              };
+              return run;
+            };
+
+            const recordPullRequest = (pr) => {
+              report.pullRequest = {
+                number: pr.number,
+                url: pr.html_url,
+                author: pr.user?.login,
+                headSha: pr.head.sha,
+                baseBranch: pr.base.ref,
+              };
+            };
+
+            try {
+              const repository = await github.rest.repos.get({ owner, repo });
+              const defaultBranch = repository.data.default_branch;
+              report.defaultBranch = defaultBranch;
+
+              let pr;
+              let ciRun;
+              if (process.env.EVENT_NAME === "workflow_run") {
+                const runId = Number(process.env.WORKFLOW_RUN_ID);
+                if (!Number.isSafeInteger(runId) || runId <= 0) {
+                  throw new Error("The triggering CI run ID is invalid.");
+                }
+                const runResponse = await github.rest.actions.getWorkflowRun({
+                  owner,
+                  repo,
+                  run_id: runId,
+                });
+                ciRun = runResponse.data;
+
+                const associatedPullRequests = ciRun.pull_requests || [];
+                const candidates = [];
+                for (const associatedPr of associatedPullRequests) {
+                  if (!associatedPr.number || !associatedPr.head?.sha) continue;
+                  const response = await github.rest.pulls.get({
+                    owner,
+                    repo,
+                    pull_number: associatedPr.number,
+                  });
+                  if (
+                    response.data.user?.login === "dependabot[bot]" &&
+                    response.data.head.sha === associatedPr.head.sha
+                  ) {
+                    candidates.push(response.data);
+                  }
+                }
+                if (candidates.length !== 1) {
+                  throw new Error("The successful CI run must identify exactly one current Dependabot pull request.");
+                }
+                pr = candidates[0];
+                recordPullRequest(pr);
+                ciRun = await validateCiRun(ciRun);
+              } else {
+                const requestedNumber = process.env.PR_NUMBER_INPUT || "";
+                if (!/^[1-9]\d*$/.test(requestedNumber)) {
+                  throw new Error("Enter a valid pull request number.");
+                }
+                if (context.ref !== `refs/heads/${defaultBranch}`) {
+                  throw new Error(`Manual runs must use the default branch (${defaultBranch}).`);
+                }
+
+                const response = await github.rest.pulls.get({
+                  owner,
+                  repo,
+                  pull_number: Number(requestedNumber),
+                });
+                pr = response.data;
+                recordPullRequest(pr);
+
+                const runsResponse = await github.rest.actions.listWorkflowRunsForRepo(
+                  {
+                    owner,
+                    repo,
+                    workflow_id: "ci.yml",
+                    event: "pull_request",
+                    per_page: 100,
+                  },
+                );
+                const matchingRuns = runsResponse.data.workflow_runs
+                  .filter((run) =>
+                    (run.path || "").split("@")[0] === workflowFile &&
+                    (run.pull_requests || []).some(
+                      (associatedPr) =>
+                        associatedPr.number === pr.number &&
+                        associatedPr.head?.sha === pr.head.sha,
+                    ),
+                  )
+                  .sort((a, b) =>
+                    (b.run_number - a.run_number) || (b.run_attempt - a.run_attempt),
+                  );
+                if (matchingRuns.length === 0) {
+                  throw new Error("No CI run for the current pull request revision was found.");
+                }
+                ciRun = await validateCiRun(matchingRuns[0]);
+              }
+
+              report.pullRequest = {
+                number: pr.number,
+                url: pr.html_url,
+                author: pr.user?.login,
+                headSha: pr.head.sha,
+                baseBranch: pr.base.ref,
+              };
+
+              if (pr.user?.login !== "dependabot[bot]") {
+                throw new Error("Only pull requests authored by dependabot[bot] can be merged.");
+              }
+              if (pr.state !== "open" || pr.merged || pr.draft) {
+                throw new Error("The pull request must be open, unmerged, and ready for review.");
+              }
+              if (pr.base.ref !== defaultBranch || pr.base.repo?.full_name !== `${owner}/${repo}`) {
+                throw new Error(`The pull request must target this repository's default branch (${defaultBranch}).`);
+              }
+              if (pr.head.repo?.full_name !== `${owner}/${repo}`) {
+                throw new Error("The pull request must come from a branch in this repository.");
+              }
+              if (!ciRun.pull_requests?.some(
+                (associatedPr) =>
+                  associatedPr.number === pr.number &&
+                  associatedPr.head?.sha === pr.head.sha,
+              )) {
+                throw new Error("The successful CI run does not match the current pull request revision.");
+              }
+
+              report.mergeAttempted = true;
+              const merge = await github.rest.pulls.merge({
+                owner,
+                repo,
+                pull_number: pr.number,
+                sha: pr.head.sha,
+                merge_method: "squash",
+              });
+              if (!merge.data.merged) {
+                throw new Error("GitHub did not confirm the pull request merge.");
+              }
+
+              report.result = "merged";
+              report.mergeSha = merge.data.sha;
+              report.message = merge.data.message;
+            } catch (error) {
+              failure = error;
+              report.error = error.message;
+            }
+
+            const summaryValue = (value) =>
+              String(value)
+                .replaceAll("&", "&amp;")
+                .replaceAll("<", "&lt;")
+                .replaceAll(">", "&gt;")
+                .replaceAll("|", "\\|")
+                .replace(/[\r\n]/g, " ");
+            report.completedAt = new Date().toISOString();
+            fs.writeFileSync(
+              "dependabot-direct-merge-report.json",
+              `${JSON.stringify(report, null, 2)}\n`,
+              { mode: 0o600 },
+            );
+            await core.summary
+              .addHeading("Dependabot direct merge report")
+              .addTable([
+                [{ data: "Result", header: true }, summaryValue(report.result)],
+                [{ data: "Pull request", header: true }, summaryValue(report.pullRequest ? `#${report.pullRequest.number}` : "Not identified")],
+                [{ data: "CI run", header: true }, summaryValue(report.ciRun ? report.ciRun.url : "Not validated")],
+                [{ data: "Merge attempted", header: true }, summaryValue(report.mergeAttempted)],
+                [{ data: "Details", header: true }, summaryValue(report.error || report.message || "All strict checks passed.")],
+              ])
+              .write();
+
+            if (failure) {
+              core.setFailed(failure.message);
+            }
+
+      - name: Upload execution report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependabot-direct-merge-report-${{ github.run_id }}
+          path: dependabot-direct-merge-report.json
+          if-no-files-found: warn
+          retention-days: 30

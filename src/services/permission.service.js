@@ -15,7 +15,7 @@ class PermissionService {
   }
 
   async updatePermission(permissionId, data) {
-    const permission = await permissionRepository.update(permissionId, data);
+    return permissionRepository.update(permissionId, data);
   }
 
   async getPermission(permissionId) {

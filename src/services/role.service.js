@@ -18,7 +18,7 @@ class RoleService {
   }
 
   async updateRole(roleId, data) {
-    const role = await roleRepository.update(roleId, data);
+    return roleRepository.update(roleId, data);
   }
 
   async getRoleWithPermissions(roleId) {

@@ -13,7 +13,7 @@ const authCheck = async (req, res, next) => {
       const decode = jwt.verify(token, process.env.JWT_SECRET);
       req.user = await User.findById(decode.id).select("-password").populate('role');
       next();
-    } catch (err) {
+    } catch {
       res.status(401).json({
         message: "Not authorized",
       });

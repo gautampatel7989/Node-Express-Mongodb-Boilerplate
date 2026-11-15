@@ -32,16 +32,7 @@ class RoleRepository {
       permission_id,
     }));
 
-    return RolePermission.insertMany(payload);
-  }
-
-  async assignPermissions(roleId, permissionIds) {
-    const payload = permissionIds.map((permission_id) => ({
-      role_id: roleId,
-      permission_id,
-    }));
-
-    return RolePermission.insertMany(payload);
+    return RolePermissionModel.insertMany(payload);
   }
 }
 

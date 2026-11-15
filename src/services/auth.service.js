@@ -101,7 +101,7 @@ class AuthService {
     });
 
     // strip password before returning
-    const { password, ...rest } = created.toObject();
+    const { password: _password, ...rest } = created.toObject();
     return rest;
   }
 }

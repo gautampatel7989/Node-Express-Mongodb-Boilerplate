@@ -378,7 +378,9 @@ curl -X GET http://localhost:3000/api/products \
 
 - `npm start` - Start the development server with nodemon
 - `npm run seed` - Seed the database with initial roles and permissions
-- `npm test` - Run tests (currently not implemented)
+- `npm test` - Run the validation and request middleware tests
+- `npm run lint` - Check application and test code with ESLint
+- `npm audit --audit-level=high` - Check dependencies for high- or critical-severity vulnerabilities
 
 ## 🔒 Security Features
 
